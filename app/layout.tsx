@@ -22,7 +22,8 @@ export const metadata: Metadata = {
     "Internal console for approving salons, managing owners and customers, and monitoring platform activity.",
   applicationName: "Bhutan Salons Admin",
   // A private console must never be indexed. This is the SEO-correct answer
-  // here: the public marketing site (web/) carries the indexable metadata.
+  // here: the public marketing site is a separate app and carries the
+  // indexable metadata.
   robots: {
     index: false,
     follow: false,

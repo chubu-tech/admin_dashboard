@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template must ship, or a fresh clone has nothing to copy. It holds
+# only the publishable key, which is public by design — RLS is the gate.
+!.env.example
 
 # vercel
 .vercel

@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bhutan Salons — Admin
 
-## Getting Started
+Internal operator console for the Bhutan Salons marketplace. Approve salon
+applications, manage owners and customers, set membership plans, and watch
+platform activity.
 
-First, run the development server:
+Next.js 16 (App Router) · React 19 · Tailwind 4 · shadcn/ui · Supabase.
+
+## The backend lives elsewhere
+
+Schema, RPCs and migrations are in **[chubu-tech/tho](https://github.com/chubu-tech/tho)**
+under `supabase/migrations/`. This repo is a client — it contains no SQL.
+
+Read [`docs/BACKEND.md`](docs/BACKEND.md) before touching anything that talks to
+the database. It documents the `admin_*` RPC contract, the allowed enum values,
+the error codes, which tables you must *not* read directly, and the traps.
+
+## Setup
+
+Requires Node 20+ and access to the `bsalons` Supabase project.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`.env.local` needs two variables, both already in `.env.example`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Notes |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://izlyevebmxqlxinigote.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The publishable key — safe in a client. RLS plus `private.require_admin()` are the real gate. |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+There is no service-role key in this app, and there should never be one.
 
-## Learn More
+## You need an admin account
 
-To learn more about Next.js, take a look at the following resources:
+The console rejects any other role at the door. There is no UI or RPC that can
+grant it: `admin_set_user_role` refuses `'admin'`, and the signup trigger
+ignores `role=admin` in user metadata. Sign up normally, then promote yourself
+with direct SQL against the project:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```sql
+update public.profiles set role = 'admin' where id = '<your-auth-user-uuid>';
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Suspending an admin revokes access immediately — `private.is_admin()` requires
+`suspended_at is null`.
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run dev      # dev server
+npm run build    # production build
+npm run lint     # eslint
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+No test framework is installed; a clean `build` and `lint` is the bar.
+
+## Layout
+
+| Path | What's in it |
+| --- | --- |
+| `app/(console)/` | The console routes, behind the role gate in `layout.tsx` |
+| `app/actions.ts` | Every server action — all mutations go through an `admin_*` RPC |
+| `app/login/` | The only public route |
+| `lib/types.ts` | TypeScript shapes mirroring the RPC return values |
+| `lib/supabase/` | `server.ts` (cookie-bound) and `client.ts` (browser) |
+| `lib/format.ts` | Ngultrum + date helpers, and the Postgres error mapper |
+| `components/ui/` | shadcn primitives — regenerate rather than hand-edit |
+| `proxy.ts` | Session refresh + an optimistic redirect. Not the auth boundary. |
+
+Agent-facing conventions are in [`AGENTS.md`](AGENTS.md).

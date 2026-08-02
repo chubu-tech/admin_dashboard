@@ -18,20 +18,23 @@ import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import type { PlanName, PlanRequestRow } from "@/lib/types";
 
-/* Prices mirror the in-app Plans screen. Keep them in step. */
+/* Mirrors `app/lib/business/plans/plans_config.dart` in the tho repo, which is
+   what an owner sees in the app. Prices are placeholders there until the
+   business sets final pricing — re-check that file before trusting these. */
 const PLANS: { value: PlanName; label: string; price: string; blurb: string }[] =
   [
     {
       value: "basic",
       label: "Basic",
-      price: "Nu 399/mo",
-      blurb: "Listed, online bookings, walk-in queue, 1 stylist.",
+      price: "Free",
+      blurb: "Listed & discoverable, online bookings, day calendar, 1 stylist.",
     },
     {
       value: "growth",
       label: "Growth",
       price: "Nu 799/mo",
-      blurb: "Unlimited stylists, week view, reminders, customer list.",
+      blurb:
+        "Unlimited stylists, week view, reminders, client book, storefront, walk-in queue.",
     },
     {
       value: "pro",
