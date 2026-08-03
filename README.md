@@ -25,14 +25,24 @@ cp .env.example .env.local
 npm run dev          # http://localhost:3000
 ```
 
-`.env.local` needs two variables, both already in `.env.example`:
+`.env.local` needs these, all listed in `.env.example`:
 
 | Variable | Notes |
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://izlyevebmxqlxinigote.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The publishable key — safe in a client. RLS plus `private.require_admin()` are the real gate. |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Server only.** Optional — without it everything works except creating a brand-new salon owner. |
 
-There is no service-role key in this app, and there should never be one.
+The service-role key bypasses RLS and every `require_admin()` guard, so it is
+not "an admin" but something past the point where roles are checked at all. It
+is here for one reason: `profiles.id` is a foreign key to `auth.users(id)` and
+profiles are only ever minted by the signup trigger, so no RPC can create a
+salon owner — the auth account has to come from the Auth admin API first.
+
+If you add it: never prefix it `NEXT_PUBLIC_`, and never import
+`lib/supabase/admin.ts` from a client component (the `server-only` import there
+makes that a build error). Any action that uses it must verify the caller is an
+admin itself — see `requireAdmin` in `app/actions.ts`.
 
 ## You need an admin account
 
@@ -63,11 +73,13 @@ No test framework is installed; a clean `build` and `lint` is the bar.
 | Path | What's in it |
 | --- | --- |
 | `app/(console)/` | The console routes, behind the role gate in `layout.tsx` |
-| `app/actions.ts` | Every server action — all mutations go through an `admin_*` RPC |
+| `app/actions.ts` | Every server action — all mutations go through an `admin_*` RPC, bar owner provisioning |
 | `app/login/` | The only public route |
 | `lib/types.ts` | TypeScript shapes mirroring the RPC return values |
-| `lib/supabase/` | `server.ts` (cookie-bound) and `client.ts` (browser) |
+| `lib/supabase/` | `server.ts` (cookie-bound), `client.ts` (browser), `admin.ts` (service role) |
 | `lib/format.ts` | Ngultrum + date helpers, and the Postgres error mapper |
+| `lib/geo.ts` | Coordinate parsing, validation and Maps links |
+| `lib/paginate.ts` | Listing pagination — 10 rows a page, sliced server-side |
 | `components/ui/` | shadcn primitives — regenerate rather than hand-edit |
 | `proxy.ts` | Session refresh + an optimistic redirect. Not the auth boundary. |
 

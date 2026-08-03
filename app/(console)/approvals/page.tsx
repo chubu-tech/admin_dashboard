@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, Star } from "lucide-react";
+import { ArrowUpRight, MapPin, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/page-header";
+import { Pagination } from "@/components/pagination";
 import { StatusBadge } from "@/components/status-badge";
 import { StatusFilter } from "@/components/status-filter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,38 +16,40 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate, relativeDays } from "@/lib/format";
+import { paginate, readPage, readStatus } from "@/lib/paginate";
 import type { SalonRow, SalonStatus } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Salon approval" };
 
-const VALID = ["pending", "approved", "rejected", "suspended", "all"];
-
 export default async function ApprovalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; page?: string }>;
 }) {
-  const { status } = await searchParams;
-  const active = status && VALID.includes(status) ? status : "pending";
+  const { status, page: pageParam } = await searchParams;
+  const active = readStatus(status, "pending");
 
+  // One unfiltered read serves both the filter-chip counts and the table. The
+  // RPC's ordering does not depend on p_status, so filtering here gives the
+  // same rows in the same order as asking it to filter — and this page needs
+  // the whole set for the counts regardless.
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("admin_salons", {
-    p_status: active,
-  });
-
-  // Counts for the filter chips come from one unfiltered read.
-  const { data: allRows } = await supabase.rpc("admin_salons", {
     p_status: "all",
   });
 
-  const salons = (data ?? []) as SalonRow[];
-  const counts = ((allRows ?? []) as SalonRow[]).reduce<Record<string, number>>(
-    (acc, row) => {
-      acc[row.status] = (acc[row.status] ?? 0) + 1;
-      acc.all = (acc.all ?? 0) + 1;
-      return acc;
-    },
-    {},
+  const allRows = (data ?? []) as SalonRow[];
+  const counts = allRows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.status] = (acc[row.status] ?? 0) + 1;
+    acc.all = (acc.all ?? 0) + 1;
+    return acc;
+  }, {});
+
+  const filtered =
+    active === "all" ? allRows : allRows.filter((row) => row.status === active);
+  const { rows: salons, page, totalPages, total } = paginate(
+    filtered,
+    readPage(pageParam),
   );
 
   return (
@@ -99,7 +102,15 @@ export default async function ApprovalsPage({
                       </p>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {salon.city ?? "—"}
+                      <span className="inline-flex items-center gap-1.5">
+                        {salon.city ?? "—"}
+                        {salon.lat != null && salon.lng != null && (
+                          <MapPin
+                            className="text-muted-foreground/70 size-3.5"
+                            aria-label="Pinned on the map"
+                          />
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-muted-foreground capitalize">
                       {salon.gender_focus ?? "—"}
@@ -146,6 +157,12 @@ export default async function ApprovalsPage({
             </Table>
           )}
         </CardContent>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          label="salons"
+        />
       </Card>
     </>
   );

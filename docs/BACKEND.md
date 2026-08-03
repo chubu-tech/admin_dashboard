@@ -4,8 +4,8 @@ The schema this console talks to lives in **`github.com/chubu-tech/tho`**, not
 here. This file is the checked-in contract so admin can be worked on without
 that repo open.
 
-Derived from tho at commit **`47fb86f`** — *feat(db): admin console backend —
-operator role, review lifecycle, admin RPCs*. Source files:
+Derived from tho at commit **`47fb86f`** plus the three migrations added since.
+Source files:
 
 | File | What it adds |
 | --- | --- |
@@ -15,6 +15,10 @@ operator role, review lifecycle, admin RPCs*. Source files:
 | `supabase/migrations/20260802000006_user_block_window.sql` | `suspended_until`, time-boxed block RPCs, `admin_customers_at_risk` |
 | `supabase/migrations/20260802000007_admin_email_cast_fix.sql` | `auth.users.email::text` cast — fixes a `42804` that broke three RPCs |
 | `supabase/migrations/20260802000008_admin_insights_and_plans.sql` | trend / leaderboard / plan RPCs |
+| `supabase/migrations/20260802000009_admin_salon_geo.sql` | `lat`/`lng` on `admin_salon_detail`, and accepted by `admin_review_salon` |
+| `supabase/migrations/20260802000010_admin_create_salon.sql` | `admin_create_salon` — onboarding on an owner's behalf |
+| `supabase/migrations/20260803000001_admin_salons_plan_and_geo.sql` | `plan`, `lat`, `lng` on `admin_salons` |
+| `supabase/migrations/20260803000002_admin_update_salon.sql` | `admin_update_salon`; `business_type` on `admin_salon_detail` |
 | `supabase/tests/admin_test.sql` | pgTAP guard coverage |
 
 > **Keep this in step.** Any migration that changes an `admin_*` signature or a
@@ -29,7 +33,7 @@ moderation of customer reviews. There is no moderation status on `reviews`.
 
 ## RPCs
 
-All 19 are `SECURITY DEFINER … set search_path = ''` and open with
+All 21 are `SECURITY DEFINER … set search_path = ''` and open with
 `private.require_admin()`. The console never decides who is an admin.
 
 ### Reads
@@ -37,22 +41,22 @@ All 19 are `SECURITY DEFINER … set search_path = ''` and open with
 | RPC | Signature | Returns | Used by |
 | --- | --- | --- | --- |
 | `admin_dashboard` | `()` | `jsonb` — see below | `app/(console)/page.tsx` |
-| `admin_salons` | `(p_status text default 'all')` | `setof` `id, name, city, gender_focus, status, submitted_at, reviewed_at, rating numeric, review_count, owner_id, owner_name, staff_count, service_count` | approvals + salons pages |
+| `admin_salons` | `(p_status text default 'all')` | `setof` `id, name, city, gender_focus, status, plan, lat, lng, submitted_at, reviewed_at, rating numeric, review_count, owner_id, owner_name, staff_count, service_count` | approvals + salons pages |
 | `admin_salon_detail` | `(p_business uuid)` | `jsonb` — see below | approvals detail + review |
 | `admin_owners` | `()` | `setof` `id, full_name, phone, email, avatar_url, suspended_at, created_at, salon_count, salons jsonb` | users page |
 | `admin_customers_at_risk` | `()` | `setof` `id, full_name, email, phone, avatar_url, no_show_count, booking_count, last_no_show_at, suspended_at, suspended_until, is_blocked, created_at` | users page |
 | `admin_bookings_trend` | `(p_range text default '14d')` | `setof` `bucket date, label text, bookings int, revenue numeric` | dashboard chart |
 | `admin_top_salons` | `(p_metric text default 'turnout', p_limit int default 8)` | `setof` `id, name, city, plan, customers, completed_bookings, revenue` | dashboard chart |
 | `admin_plan_requests` | `()` | `setof` `id, business_id, business_name, city, current_plan, requested_plan, note, requested_by_name, created_at` | approvals detail |
-| `admin_users` | `()` | `setof` `id, full_name, phone, email, avatar_url, role, suspended_at, created_at, salon_count, booking_count, is_self` | **unused** — `UserRow` exists in `lib/types.ts`, nothing calls it |
+| `admin_users` | `()` | `setof` `id, full_name, phone, email, avatar_url, role, suspended_at, created_at, salon_count, booking_count, is_self` | the owner picker on `/salons/new` |
 
 `admin_dashboard()` keys: `total_users`, `total_salons`, `pending_approvals`,
 `total_bookings`, `salons_by_status[]`, `users_by_role[]`, `bookings_by_day[]`
 (fixed 14 days), `bookings_by_status[]`, `recent_pending[]` (limit 5).
 
-`admin_salon_detail(p_business)` keys: `salon` (20 fields), `owner` (nullable),
-`documents[]`, `staff[]`, `services[]`, `hours[]`. Mirrored exactly by
-`SalonDetail` in `lib/types.ts`.
+`admin_salon_detail(p_business)` keys: `salon` (22 fields, including `lat` and
+`lng` as numbers), `owner` (nullable), `documents[]`, `staff[]`, `services[]`,
+`hours[]`. Mirrored exactly by `SalonDetail` in `lib/types.ts`.
 
 Argument validation: `p_status` ∈ `all | pending | approved | rejected |
 suspended` (or null); `p_range` ∈ `week | 14d | month | year`; `p_metric` ∈
@@ -66,6 +70,8 @@ status.
 
 | RPC | Signature | Used by |
 | --- | --- | --- |
+| `admin_create_salon` | `(p_owner uuid, p_info jsonb default '{}', p_hours jsonb default '[]')` → `jsonb` (the new `admin_salon_detail`) | `salon-wizard.tsx` |
+| `admin_update_salon` | `(p_business uuid, p_info jsonb default '{}', p_hours jsonb default '[]')` → `jsonb` (the fresh `admin_salon_detail`) | `salon-edit-form.tsx` |
 | `admin_review_salon` | `(p_business uuid, p_decision text, p_reason text default null, p_info jsonb default '{}', p_hours jsonb default '[]')` → `jsonb` (the fresh `admin_salon_detail`) | `review-wizard.tsx` |
 | `admin_set_salon_status` | `(p_business uuid, p_status text)` — `suspended \| approved` only | `salon-actions.tsx` |
 | `admin_delete_salon` | `(p_business uuid)` — soft delete | `salon-actions.tsx` |
@@ -83,17 +89,66 @@ and updates the owner's `full_name`/`avatar_url` from `p_info`.
 
 `p_info` keys (all optional except `name`, each `coalesce`d onto the existing
 value): `name`, `description`, `gender_focus`, `address_text`, `city`, `phone`,
-`email`, `owner_name`, `owner_avatar_url`.
+`email`, `lat`, `lng`, `owner_name`, `owner_avatar_url`.
 
 `p_hours` element: `{day_of_week: 0-6, open_time: "HH:MM", close_time: "HH:MM",
 closed: bool}`.
 
+### `admin_update_salon` reads key *presence*, not value
+
+The one RPC where **an empty value clears the column.** `admin_create_salon`
+and `admin_review_salon` both `coalesce(nullif(trim(…),''), existing)`, so an
+empty string means "leave it alone" — which makes a mistyped phone number or a
+misplaced map pin impossible to remove. Here:
+
+| `p_info` | Result |
+| --- | --- |
+| key absent | column unchanged |
+| key present with a value | column set |
+| key present and empty | column set to **NULL** |
+
+`lat: "", lng: ""` therefore **un-pins** a salon — the only way to. Implemented
+with `jsonb_exists(p_info, 'phone')` rather than the `?` operator, which some
+Postgres drivers read as a bind placeholder.
+
+`name` and `business_type` are `NOT NULL`, so a present-but-empty value there
+raises `22023` instead of clearing.
+
+**It writes no status field.** Not `status`, `is_active`, `suspended_at`,
+`rejection_reason`, `reviewed_at` or `reviewed_by` — which is precisely why it
+exists rather than reusing `admin_review_salon`, whose `UPDATE` sets all six.
+Editing a suspended salon with the review RPC would silently republish it. There
+is a pgTAP case pinning this. It also does not write the owner's profile.
+
+`admin_create_salon` takes the same `p_info` keys minus `owner_avatar_url`,
+plus `business_type` (`salon | barber | home_based | mobile`, default `salon`)
+and `plan` (default `basic`). It inserts `status='approved'`, `is_active=true`,
+`reviewed_by=auth.uid()`, and promotes the owner's profile from `customer` to
+`owner`. It does **not** set `whatsapp_phone`, `service_radius_km`, `timezone`,
+`cover_url`, `cancellation_window_hours`, `reminder_channel`, `queue_enabled`
+or `queue_join_mode` — all defaulted, all the owner's own settings screen.
+
+### Coordinates
+
+`lat`/`lng` go in as **strings** (`p_info->>'lat'`), because `p_info` is jsonb
+from a web form. Both RPCs validate them identically: send both or neither
+(a lone one raises `22023`), plain numbers only (`^-?[0-9]+(\.[0-9]+)?$` — no
+exponents), lat in [-90, 90], lng in [-180, 180]. `admin_review_salon`
+coalesces, so omitting them leaves an existing pin alone.
+
+They come back out of `admin_salon_detail` and `admin_salons` as **numbers**.
+`lib/geo.ts` mirrors the validation and parses pasted Maps links.
+
+A salon with no pin is fully bookable — it is only absent from the customer
+Map tab and loses the distance cue and the recommender's proximity boost.
+Nothing server-side reads the coordinates; distance is computed in Dart over
+the whole list, and there is no geo index and no PostGIS.
+
 ### Known gaps
 
-`admin_users`, `admin_verify_document`, `admin_set_user_role` and
-`admin_delete_user` all work server-side but no UI reaches them. Most visible:
-the salon detail page renders a Verified / Unverified badge on each document
-with no way to toggle it.
+`admin_verify_document`, `admin_set_user_role` and `admin_delete_user` all work
+server-side but no UI reaches them. Most visible: the salon detail page renders
+a Verified / Unverified badge on each document with no way to toggle it.
 
 ---
 
@@ -132,10 +187,15 @@ while `suspended_at` is still set).
 raise text that is already fit to show an admin ("a rejection reason of at least
 10 characters is required"). Keep it that way.
 
-EXECUTE grants are inconsistent across migrations, so an anonymous caller gets
-different codes depending on the RPC: the twelve `…0005` functions keep PUBLIC
-execute and raise `28000` from the body, while `…0006` and `…0008` revoke to
-`authenticated` and fail with `42501` before the body runs.
+EXECUTE grants are inconsistent across migrations, and not in the way the
+migration text suggests. Supabase's default privileges grant EXECUTE on new
+`public` functions to `anon` as well as `authenticated`, so a
+`revoke all … from public` removes only the PUBLIC entry and leaves the
+explicit `anon` grant standing. Checked against the live catalogue:
+`admin_create_salon`, `admin_bookings_trend` and the rebuilt `admin_salons` all
+carry `anon=X`. In practice every path still ends at `28000 authentication
+required` from `require_admin()`, so this is a wrong error code rather than a
+hole — but do not rely on `42501` meaning "anon".
 
 ---
 
@@ -155,11 +215,43 @@ Tables that *do* have an admin SELECT policy (`…0004`): `bookings`,
 
 ---
 
+## Creating an owner — the one non-RPC mutation
+
+`profiles.id` is `FK → auth.users(id) ON DELETE CASCADE`, and profiles are only
+ever minted by the `handle_new_user` signup trigger. **There is no SQL that
+creates a salon owner**, so `admin_create_salon` requires the profile to exist
+already and raises `P0002 owner not found` otherwise.
+
+The console therefore provisions the auth account first, with the service-role
+key, via `auth.admin.createUser`. The trigger reads only `full_name` and `role`
+off `raw_user_meta_data`, so the profile lands correct on insert and only
+`avatar_url` needs a follow-up write.
+
+That path bypasses RLS and `require_admin()` entirely, so `createOwner` in
+`app/actions.ts` carries its own `requireAdmin()` check against the caller's
+cookie-bound session. It is the only action in the console that authorizes
+anything itself.
+
+Note the trigger's role whitelist is `('customer','staff','owner')` — passing
+`role: 'admin'` silently falls back to `customer`. Combined with
+`admin_set_user_role` refusing `'admin'`, a new operator can still only be
+made with direct SQL.
+
 ## Sharp edges
 
 - **`admin_review_salon` requires `p_info->>'name'` even on approve.** Calling
   it with the default `p_info = '{}'` always raises `22023 salon name is
-  required`. The wizard always sends the full info object; keep it that way.
+  required`. Both wizards always send the full info object; keep it that way.
+- **`admin_create_salon` has no rollback across the two steps.** If the auth
+  user is created and then the RPC fails, the account exists with no salon.
+  The operator can retry against the now-existing account via the picker.
+- **Three RPCs write the same columns with two different null contracts.**
+  `admin_create_salon` and `admin_review_salon` coalesce (empty = no change);
+  `admin_update_salon` reads key presence (empty = NULL). Check which one you
+  are calling before assuming a blank field is harmless.
+- **Never reuse `admin_review_salon` as an edit.** It has no no-op decision —
+  `p_decision` is validated to `approve|reject` — so every call re-decides the
+  application and re-stamps `reviewed_at`.
 - **A non-empty `p_hours` is a full replace, not a patch.** It deletes every
   `business_hours` row for the salon and reinserts the non-closed days. Send the
   whole week or send `[]`.
@@ -213,6 +305,17 @@ guard on `admin_dashboard`, `admin_delete_user`, `admin_set_user_role`,
 and `admin_review_salon`, plus admin-vs-admin protection and immediate
 revocation on suspension.
 
-**Not covered:** everything from `…0006` and `…0008` — `admin_block_user`,
-`admin_unblock_user`, `admin_customers_at_risk`, `admin_bookings_trend`,
-`admin_top_salons`, `admin_set_salon_plan`, `admin_plan_requests`.
+`admin_update_salon` adds thirteen (`plan(39)`): anon and customer rejection,
+`P0002`, a blank `name`, an unknown `business_type`, a lone latitude, the
+set/absent/empty triad on `phone`, un-pinning, and the state-preservation case —
+suspend a salon, edit it, assert `status`, `suspended_at`, `reviewed_at` and
+`is_active` all survive while the edit itself lands.
+
+`admin_create_salon` adds ten (`plan(26)`): anon and customer rejection,
+`P0002 owner not found`, the empty-`p_info` name check, a lone latitude, an
+out-of-range latitude, an unknown plan, the happy path, the customer→owner
+promotion, and the `approved` starting status.
+
+**Not covered:** `admin_block_user`, `admin_unblock_user`,
+`admin_customers_at_risk`, `admin_bookings_trend`, `admin_top_salons`,
+`admin_set_salon_plan`, `admin_plan_requests`.

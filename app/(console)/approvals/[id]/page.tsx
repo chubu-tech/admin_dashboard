@@ -5,8 +5,10 @@ import {
   ArrowLeft,
   BadgeCheck,
   CalendarDays,
+  ExternalLink,
   Mail,
   MapPin,
+  Navigation,
   Phone,
   Star,
 } from "lucide-react";
@@ -38,6 +40,7 @@ import {
   formatNu,
   initials,
 } from "@/lib/format";
+import { mapsUrl } from "@/lib/geo";
 import { PlanControl } from "@/components/plan-control";
 import {
   DAY_NAMES,
@@ -160,6 +163,26 @@ export default async function SalonDetailPage({ params }: Props) {
             </Detail>
             <Detail icon={CalendarDays} label="Last reviewed">
               {formatDate(salon.reviewed_at)}
+            </Detail>
+            <Detail icon={Navigation} label="Map location">
+              {salon.lat != null && salon.lng != null ? (
+                <a
+                  href={mapsUrl(salon.lat, salon.lng)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 hover:underline"
+                >
+                  <span className="tabular-nums">
+                    {salon.lat}, {salon.lng}
+                  </span>
+                  <ExternalLink className="size-3.5" aria-hidden />
+                </a>
+              ) : (
+                /* The owner app says exactly this when a salon has no pin. */
+                <span className="text-muted-foreground">
+                  Not on the map yet
+                </span>
+              )}
             </Detail>
           </CardContent>
         </Card>

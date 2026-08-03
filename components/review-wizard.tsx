@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { reviewSalon } from "@/app/actions";
+import { Field, FieldError } from "@/components/form-field";
+import { HoursEditor, validateHours } from "@/components/hours-editor";
+import {
+  SalonDetailsFields,
+  validateSalonDetails,
+} from "@/components/salon-details-fields";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,16 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
@@ -60,6 +57,10 @@ export function ReviewWizard({ detail }: { detail: SalonDetail }) {
     city: salon.city ?? "",
     phone: salon.phone ?? "",
     email: salon.email ?? "",
+    // Strings, because the RPC reads them with `p_info->>'lat'` and parses
+    // them itself. Empty means "leave whatever pin is already there".
+    lat: salon.lat != null ? String(salon.lat) : "",
+    lng: salon.lng != null ? String(salon.lng) : "",
     owner_name: owner?.full_name ?? "",
     owner_avatar_url: owner?.avatar_url ?? "",
   });
@@ -92,28 +93,14 @@ export function ReviewWizard({ detail }: { detail: SalonDetail }) {
   }
 
   function validateStep(target: number) {
-    const next: Record<string, string> = {};
+    let next: Record<string, string> = {};
 
     if (target === 1) {
-      if (!info.name.trim()) next.name = "Salon name is required.";
-      if (
-        info.gender_focus &&
-        !["male", "female", "unisex"].includes(info.gender_focus)
-      ) {
-        next.gender_focus = "Choose male, female or unisex.";
-      }
+      next = { ...next, ...validateSalonDetails(info) };
     }
 
     if (target === 2) {
-      for (const day of hours) {
-        if (day.closed) continue;
-        if (!day.open_time || !day.close_time) {
-          next[`day-${day.day_of_week}`] =
-            "Set both times, or mark the day closed.";
-        } else if (day.open_time >= day.close_time) {
-          next[`day-${day.day_of_week}`] = "Closing time must be after opening.";
-        }
-      }
+      next = { ...next, ...validateHours(hours) };
     }
 
     setErrors(next);
@@ -228,68 +215,14 @@ export function ReviewWizard({ detail }: { detail: SalonDetail }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-5 sm:grid-cols-2">
-            <Field
-              id="name"
-              label="Salon name"
-              required
-              value={info.name}
-              onChange={(v) => setField("name", v)}
-              error={errors.name}
-            />
-
-            <div className="grid gap-2">
-              <Label htmlFor="gender_focus">Gender focus</Label>
-              <Select
-                value={info.gender_focus || undefined}
-                onValueChange={(v: string) => setField("gender_focus", v)}
-              >
-                <SelectTrigger id="gender_focus">
-                  <SelectValue placeholder="Not set" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="male">Male</SelectItem>
-                  <SelectItem value="female">Female</SelectItem>
-                  <SelectItem value="unisex">Unisex</SelectItem>
-                </SelectContent>
-              </Select>
-              {errors.gender_focus && <FieldError>{errors.gender_focus}</FieldError>}
-            </div>
-
-            <div className="grid gap-2 sm:col-span-2">
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                rows={3}
-                value={info.description}
-                onChange={(e) => setField("description", e.target.value)}
-              />
-            </div>
-
-            <Field
-              id="address_text"
-              label="Address"
-              value={info.address_text}
-              onChange={(v) => setField("address_text", v)}
-            />
-            <Field
-              id="city"
-              label="City"
-              value={info.city}
-              onChange={(v) => setField("city", v)}
-            />
-            <Field
-              id="phone"
-              label="Phone"
-              type="tel"
-              value={info.phone}
-              onChange={(v) => setField("phone", v)}
-            />
-            <Field
-              id="email"
-              label="Email"
-              type="email"
-              value={info.email}
-              onChange={(v) => setField("email", v)}
+            <SalonDetailsFields
+              value={info}
+              errors={errors}
+              onField={setField}
+              onCoords={({ lat, lng }) => {
+                setInfo((prev) => ({ ...prev, lat, lng }));
+                setErrors((prev) => ({ ...prev, coords: "" }));
+              }}
             />
 
             <div className="bg-muted/40 grid gap-4 rounded-lg p-4 sm:col-span-2 sm:grid-cols-[auto_1fr_1fr] sm:items-end">
@@ -330,74 +263,8 @@ export function ReviewWizard({ detail }: { detail: SalonDetail }) {
               closed.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {hours.map((day) => {
-              const error = errors[`day-${day.day_of_week}`];
-              return (
-                <div
-                  key={day.day_of_week}
-                  className="grid gap-3 border-b pb-3 last:border-0 last:pb-0 sm:grid-cols-[9rem_1fr_1fr_auto] sm:items-center"
-                >
-                  <span className="text-sm font-medium">
-                    {DAY_NAMES[day.day_of_week]}
-                  </span>
-
-                  <div className="grid gap-1.5">
-                    <Label
-                      htmlFor={`open-${day.day_of_week}`}
-                      className="text-muted-foreground text-xs"
-                    >
-                      Opens
-                    </Label>
-                    <Input
-                      id={`open-${day.day_of_week}`}
-                      type="time"
-                      value={day.open_time}
-                      disabled={day.closed}
-                      aria-invalid={Boolean(error)}
-                      onChange={(e) =>
-                        setDay(day.day_of_week, { open_time: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label
-                      htmlFor={`close-${day.day_of_week}`}
-                      className="text-muted-foreground text-xs"
-                    >
-                      Closes
-                    </Label>
-                    <Input
-                      id={`close-${day.day_of_week}`}
-                      type="time"
-                      value={day.close_time}
-                      disabled={day.closed}
-                      aria-invalid={Boolean(error)}
-                      onChange={(e) =>
-                        setDay(day.day_of_week, { close_time: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <label className="flex items-center gap-2 text-sm sm:pt-5">
-                    <Checkbox
-                      checked={day.closed}
-                      onCheckedChange={(checked: boolean | "indeterminate") =>
-                        setDay(day.day_of_week, { closed: checked === true })
-                      }
-                    />
-                    Closed
-                  </label>
-
-                  {error && (
-                    <p className="text-destructive text-xs sm:col-span-4">
-                      {error}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+          <CardContent>
+            <HoursEditor hours={hours} errors={errors} onChange={setDay} />
           </CardContent>
         </Card>
       )}
@@ -489,52 +356,5 @@ export function ReviewWizard({ detail }: { detail: SalonDetail }) {
         </Button>
       </div>
     </div>
-  );
-}
-
-function Field({
-  id,
-  label,
-  value,
-  onChange,
-  error,
-  required,
-  type = "text",
-  placeholder,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  error?: string;
-  required?: boolean;
-  type?: string;
-  placeholder?: string;
-}) {
-  return (
-    <div className="grid gap-2">
-      <Label htmlFor={id}>
-        {label}
-        {required && <span className="text-destructive"> *</span>}
-      </Label>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? `${id}-error` : undefined}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      {error && <FieldError id={`${id}-error`}>{error}</FieldError>}
-    </div>
-  );
-}
-
-function FieldError({ children, id }: { children: React.ReactNode; id?: string }) {
-  return (
-    <p id={id} role="alert" className="text-destructive text-xs">
-      {children}
-    </p>
   );
 }

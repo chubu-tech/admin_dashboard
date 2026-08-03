@@ -24,6 +24,13 @@ and update the doc when it turns out to be stale.
 - **Every mutation goes through an `admin_*` RPC.** Never
   `.from().insert()/.update()/.delete()`. All server actions live in
   `app/actions.ts`.
+- **The service role is the one exception, and it carries its own guard.**
+  `lib/supabase/admin.ts` bypasses RLS *and* `private.require_admin()` — it is
+  not "an admin", it is past the point where roles are checked. It exists only
+  to create an owner's `auth.users` row, which no RPC can do. Any action that
+  touches it **must call `requireAdmin()` first**, using the caller's own
+  cookie-bound session. Never authorize with the service client; it would be
+  checking itself.
 - **Never `.from()` `businesses`, `profiles` or `plan_change_requests` for a
   listing.** An admin has no RLS SELECT clause on them, so the reads silently
   under-return rather than erroring: `businesses` yields only live+active salons
@@ -51,7 +58,29 @@ and update the doc when it turns out to be stale.
 - `lib/supabase/` — `server.ts` (cookie-bound, used by everything) and
   `client.ts` (browser, used by the login form).
 - `lib/format.ts` — display helpers + `rpcErrorMessage`.
+- `lib/geo.ts` — coordinate parsing/validation, mirroring the RPCs' own rules.
+- `lib/paginate.ts` — `PER_PAGE = 10`, `readPage`, `paginate`. Listings fetch
+  everything and slice; the RPCs take no limit/offset.
 - `components/ui/` — shadcn primitives. Regenerate rather than hand-editing.
+  There is no `components.json`, so the CLI cannot run without scaffolding one.
+- Shared form pieces: `components/form-field.tsx` (`Field`, `FieldError`),
+  `components/salon-details-fields.tsx` (the details grid + `validateSalonDetails`),
+  `components/hours-editor.tsx`, `components/location-fields.tsx`. All three
+  salon forms — review, create, edit — use them. Change them there, not in a
+  copy. Field ids are global, so render at most one details grid per page.
+- **Editing a salon is `admin_update_salon`, never `admin_review_salon`.** The
+  review RPC re-decides the application and re-stamps the audit trail; the update
+  RPC writes no status field. They also differ on nulls: update treats an empty
+  value as "clear this", the other two treat it as "leave it alone".
+
+## Listings
+
+Ten rows a page, driven by a query param so a page is a shareable URL that
+survives a refresh. `components/pagination.tsx` renders links; the server
+computes the numbers and passes them down, the same split as `StatusFilter`.
+Pages with several tables give each its own param (`?ownersPage=`, …), and
+`/users` keeps its tab in the URL too — paging is a navigation, so a
+client-only tab would snap back on every page change.
 
 ## Creating an admin
 

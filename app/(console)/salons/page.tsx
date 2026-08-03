@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Star } from "lucide-react";
+import { MapPin, Plus, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/page-header";
+import { Pagination } from "@/components/pagination";
 import { SalonActions } from "@/components/salon-actions";
 import { StatusBadge } from "@/components/status-badge";
 import { StatusFilter } from "@/components/status-filter";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -16,32 +19,42 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate } from "@/lib/format";
+import { paginate, readPage, readStatus } from "@/lib/paginate";
 import type { SalonRow, SalonStatus } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Salon management" };
 
-const VALID = ["pending", "approved", "rejected", "suspended", "all"];
-
 export default async function SalonsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; page?: string }>;
 }) {
-  const { status } = await searchParams;
-  const active = status && VALID.includes(status) ? status : "all";
+  const { status, page: pageParam } = await searchParams;
+  const active = readStatus(status, "all");
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("admin_salons", {
     p_status: active,
   });
-  const salons = (data ?? []) as SalonRow[];
+  const all = (data ?? []) as SalonRow[];
+  const { rows: salons, page, totalPages, total } = paginate(
+    all,
+    readPage(pageParam),
+  );
 
   return (
     <>
       <PageHeader
         title="Salon management"
         description="Every salon on the platform. Suspend, reactivate or remove."
-      />
+      >
+        <Button asChild>
+          <Link href="/salons/new">
+            <Plus className="size-4" aria-hidden />
+            Add salon
+          </Link>
+        </Button>
+      </PageHeader>
 
       <StatusFilter active={active} />
 
@@ -62,6 +75,7 @@ export default async function SalonsPage({
                   <TableHead>Salon</TableHead>
                   <TableHead>Owner</TableHead>
                   <TableHead>City</TableHead>
+                  <TableHead>Plan</TableHead>
                   <TableHead className="text-right">Rating</TableHead>
                   <TableHead>Reviewed</TableHead>
                   <TableHead>Status</TableHead>
@@ -86,7 +100,20 @@ export default async function SalonsPage({
                       {salon.owner_name ?? "—"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {salon.city ?? "—"}
+                      <span className="inline-flex items-center gap-1.5">
+                        {salon.city ?? "—"}
+                        {salon.lat != null && salon.lng != null && (
+                          <MapPin
+                            className="text-muted-foreground/70 size-3.5"
+                            aria-label="Pinned on the map"
+                          />
+                        )}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="capitalize">
+                        {salon.plan}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {salon.review_count > 0 ? (
@@ -114,6 +141,7 @@ export default async function SalonsPage({
                           salonName={salon.name}
                           status={salon.status as SalonStatus}
                           showReview={false}
+                          compactEdit
                         />
                       </div>
                     </TableCell>
@@ -123,6 +151,12 @@ export default async function SalonsPage({
             </Table>
           )}
         </CardContent>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          label="salons"
+        />
       </Card>
     </>
   );

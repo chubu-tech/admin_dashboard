@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/page-header";
+import { Pagination } from "@/components/pagination";
 import { StatusBadge } from "@/components/status-badge";
 import { BlockActions } from "@/components/user-actions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,11 +19,29 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate, initials, relativeDays } from "@/lib/format";
+import { paginate, readPage } from "@/lib/paginate";
 import type { CustomerRiskRow, OwnerRow } from "@/lib/types";
 
 export const metadata: Metadata = { title: "User management" };
 
-export default async function UsersPage() {
+const TABS = ["owners", "no-shows", "blocked"] as const;
+type TabName = (typeof TABS)[number];
+
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    tab?: string;
+    ownersPage?: string;
+    noShowPage?: string;
+    blockedPage?: string;
+  }>;
+}) {
+  const params = await searchParams;
+  const tab: TabName = TABS.includes(params.tab as TabName)
+    ? (params.tab as TabName)
+    : "owners";
+
   const supabase = await createClient();
 
   const [{ data: ownerData }, { data: riskData, error: riskError }] =
@@ -36,6 +55,12 @@ export default async function UsersPage() {
   const noShows = atRisk.filter((c) => c.no_show_count > 0 && !c.is_blocked);
   const blocked = atRisk.filter((c) => c.is_blocked);
 
+  // Three tables, three page params — they are independent lists, and the
+  // no-show/blocked split comes from one RPC call, so slice after filtering.
+  const ownerPage = paginate(owners, readPage(params.ownersPage));
+  const noShowPage = paginate(noShows, readPage(params.noShowPage));
+  const blockedPage = paginate(blocked, readPage(params.blockedPage));
+
   return (
     <>
       <PageHeader
@@ -43,11 +68,21 @@ export default async function UsersPage() {
         description="Salon owners, customers who miss appointments, and anyone currently blocked."
       />
 
-      <Tabs defaultValue="owners">
+      {/* The tab lives in the URL, not in React state. Paging a table is a
+          navigation, and a client-only tab would snap back to Owners on every
+          page change. Triggers are real links for the same reason the status
+          filter is — see components/status-filter.tsx. */}
+      <Tabs value={tab}>
         <TabsList>
-          <TabsTrigger value="owners">Owners ({owners.length})</TabsTrigger>
-          <TabsTrigger value="no-shows">No-shows ({noShows.length})</TabsTrigger>
-          <TabsTrigger value="blocked">Blocked ({blocked.length})</TabsTrigger>
+          <TabsTrigger value="owners" asChild>
+            <Link href="/users">Owners ({owners.length})</Link>
+          </TabsTrigger>
+          <TabsTrigger value="no-shows" asChild>
+            <Link href="/users?tab=no-shows">No-shows ({noShows.length})</Link>
+          </TabsTrigger>
+          <TabsTrigger value="blocked" asChild>
+            <Link href="/users?tab=blocked">Blocked ({blocked.length})</Link>
+          </TabsTrigger>
         </TabsList>
 
         {/* Owners + their salons */}
@@ -67,7 +102,7 @@ export default async function UsersPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {owners.map((owner) => (
+                    {ownerPage.rows.map((owner) => (
                       <TableRow key={owner.id}>
                         <TableCell>
                           <div className="flex items-center gap-2.5">
@@ -101,7 +136,9 @@ export default async function UsersPage() {
                             </span>
                           ) : (
                             <ul className="flex flex-wrap gap-1.5">
-                              {owner.salons.map((salon) => (
+                              {/* One cell should not grow without bound just
+                                  because an owner runs a chain. */}
+                              {owner.salons.slice(0, 3).map((salon) => (
                                 <li key={salon.id}>
                                   <Link
                                     href={`/approvals/${salon.id}`}
@@ -115,6 +152,11 @@ export default async function UsersPage() {
                                   </Link>
                                 </li>
                               ))}
+                              {owner.salons.length > 3 && (
+                                <li className="text-muted-foreground self-center text-xs">
+                                  +{owner.salons.length - 3} more
+                                </li>
+                              )}
                             </ul>
                           )}
                         </TableCell>
@@ -127,6 +169,13 @@ export default async function UsersPage() {
                 </Table>
               )}
             </CardContent>
+            <Pagination
+              page={ownerPage.page}
+              totalPages={ownerPage.totalPages}
+              total={ownerPage.total}
+              param="ownersPage"
+              label="owners"
+            />
           </Card>
         </TabsContent>
 
@@ -154,7 +203,7 @@ export default async function UsersPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {noShows.map((customer) => (
+                    {noShowPage.rows.map((customer) => (
                       <TableRow key={customer.id}>
                         <TableCell>
                           <CustomerCell customer={customer} />
@@ -195,6 +244,13 @@ export default async function UsersPage() {
                 </Table>
               )}
             </CardContent>
+            <Pagination
+              page={noShowPage.page}
+              totalPages={noShowPage.totalPages}
+              total={noShowPage.total}
+              param="noShowPage"
+              label="customers"
+            />
           </Card>
         </TabsContent>
 
@@ -216,7 +272,7 @@ export default async function UsersPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {blocked.map((customer) => (
+                    {blockedPage.rows.map((customer) => (
                       <TableRow key={customer.id}>
                         <TableCell>
                           <CustomerCell customer={customer} />
@@ -254,6 +310,13 @@ export default async function UsersPage() {
                 </Table>
               )}
             </CardContent>
+            <Pagination
+              page={blockedPage.page}
+              totalPages={blockedPage.totalPages}
+              total={blockedPage.total}
+              param="blockedPage"
+              label="customers"
+            />
           </Card>
         </TabsContent>
       </Tabs>

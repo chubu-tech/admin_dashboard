@@ -36,6 +36,10 @@ export type SalonRow = {
   city: string | null;
   gender_focus: string | null;
   status: SalonStatus;
+  /** `businesses.plan` is NOT NULL DEFAULT 'basic', so this never comes back null. */
+  plan: PlanName;
+  lat: number | null;
+  lng: number | null;
   submitted_at: string | null;
   reviewed_at: string | null;
   rating: number;
@@ -60,6 +64,10 @@ export type SalonDetail = {
     email: string | null;
     plan: string | null;
     is_active: boolean;
+    business_type: BusinessType;
+    /** Null until somebody pins the salon. Owners can only do it by GPS, on site. */
+    lat: number | null;
+    lng: number | null;
     submitted_at: string | null;
     reviewed_at: string | null;
     rejection_reason: string | null;
@@ -197,8 +205,14 @@ export type PlanRequestRow = {
   created_at: string;
 };
 
-/** What the review wizard sends as `p_info`. */
-export type ReviewInfo = {
+/**
+ * The salon columns every `p_info` payload can carry.
+ *
+ * All strings: `p_info` is jsonb and the RPCs read it with `->>`, parsing the
+ * coordinates themselves. Send `lat` and `lng` together or not at all — a lone
+ * one raises 22023.
+ */
+type SalonInfoBase = {
   name: string;
   description?: string;
   gender_focus?: GenderFocus | "";
@@ -206,6 +220,17 @@ export type ReviewInfo = {
   city?: string;
   phone?: string;
   email?: string;
+  lat?: string;
+  lng?: string;
+};
+
+/**
+ * What the review wizard sends as `p_info` for `admin_review_salon`.
+ *
+ * Coalescing semantics: an empty value means "leave it alone", so this cannot
+ * clear a field. Use `UpdateSalonInfo` when that matters.
+ */
+export type ReviewInfo = SalonInfoBase & {
   owner_name?: string;
   owner_avatar_url?: string;
 };
@@ -216,6 +241,66 @@ export type ReviewHours = {
   open_time: string;
   close_time: string;
   closed: boolean;
+};
+
+/** `businesses.business_type` — a CHECK on text, not an enum. */
+export type BusinessType = "salon" | "barber" | "home_based" | "mobile";
+
+export const BUSINESS_TYPES: { value: BusinessType; label: string }[] = [
+  { value: "salon", label: "Salon" },
+  { value: "barber", label: "Barber" },
+  { value: "home_based", label: "Home-based" },
+  { value: "mobile", label: "Mobile / travels to you" },
+];
+
+export const PLAN_NAMES: { value: PlanName; label: string }[] = [
+  { value: "basic", label: "Basic" },
+  { value: "growth", label: "Growth" },
+  { value: "pro", label: "Pro" },
+];
+
+/**
+ * What the add-salon wizard sends as `admin_create_salon`'s `p_info`.
+ *
+ * `business_type` and `plan` default server-side to `salon` and `basic` when
+ * absent.
+ */
+export type CreateSalonInfo = SalonInfoBase & {
+  business_type?: BusinessType;
+  plan?: PlanName;
+  owner_name?: string;
+};
+
+/**
+ * What the edit form sends as `admin_update_salon`'s `p_info`.
+ *
+ * **This one is the exception: an empty value CLEARS the column.** Presence of
+ * the key decides — absent leaves the column alone, present-with-a-value sets
+ * it, present-and-empty writes NULL. Sending `lat: "", lng: ""` un-pins the
+ * salon. `name` and `business_type` are NOT NULL server-side, so a present-but-
+ * empty value there raises 22023 instead of clearing.
+ *
+ * No `plan`: `PlanControl` owns that via `admin_set_salon_plan`, which also
+ * closes a matching plan-change request. No owner fields either — editing a
+ * salon should not rename a person.
+ */
+export type UpdateSalonInfo = SalonInfoBase & {
+  business_type?: BusinessType;
+};
+
+/**
+ * Details for an owner the console provisions itself.
+ *
+ * This is the one path that does not go through an `admin_*` RPC: a profile
+ * cannot exist without an `auth.users` row, so the account is created with the
+ * service role first. See `createOwner` in `app/actions.ts`.
+ */
+export type NewOwner = {
+  email: string;
+  password: string;
+  full_name: string;
+  phone?: string;
+  avatar_url?: string;
 };
 
 export const DAY_NAMES = [

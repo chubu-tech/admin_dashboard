@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
+import { Loader2, PauseCircle, Pencil, PlayCircle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteSalon, setSalonStatus } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -24,18 +24,25 @@ import type { SalonStatus } from "@/lib/types";
  * Status actions for one salon. Which buttons exist is driven by the same rule
  * the database enforces (`admin_set_salon_status`): only an approved salon can
  * be suspended, only a suspended one reactivated.
+ *
+ * Edit is the exception — it shows at every status, because `admin_update_salon`
+ * touches no status field. Correcting a pending application and deciding it are
+ * separate acts.
  */
 export function SalonActions({
   salonId,
   salonName,
   status,
   showReview = true,
+  compactEdit = false,
   redirectAfterDelete,
 }: {
   salonId: string;
   salonName: string;
   status: SalonStatus;
   showReview?: boolean;
+  /** Icon-only Edit, for the narrow table rows on /salons. */
+  compactEdit?: boolean;
   redirectAfterDelete?: string;
 }) {
   const [pending, startTransition] = useTransition();
@@ -62,6 +69,21 @@ export function SalonActions({
           </Link>
         </Button>
       )}
+
+      <Button
+        asChild
+        variant="outline"
+        size={compactEdit ? "icon" : "default"}
+        title={compactEdit ? `Edit ${salonName}` : undefined}
+      >
+        <Link
+          href={`/approvals/${salonId}/edit`}
+          aria-label={compactEdit ? `Edit ${salonName}` : undefined}
+        >
+          <Pencil className="size-4" aria-hidden />
+          {!compactEdit && "Edit"}
+        </Link>
+      </Button>
 
       {status === "approved" && (
         <Button
