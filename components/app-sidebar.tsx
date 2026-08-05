@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ClipboardCheck, Scissors, Store, Users } from "lucide-react";
+import { BarChart3, ClipboardCheck, Mail, Scissors, Store, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -22,6 +22,7 @@ const NAV = [
   { href: "/approvals", label: "Salon approval", icon: ClipboardCheck },
   { href: "/salons", label: "Salon management", icon: Store },
   { href: "/users", label: "User management", icon: Users },
+  { href: "/waitlist", label: "App waitlist", icon: Mail },
 ];
 
 export function AppSidebar({

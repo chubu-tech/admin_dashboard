@@ -19,6 +19,7 @@ Source files:
 | `supabase/migrations/20260802000010_admin_create_salon.sql` | `admin_create_salon` — onboarding on an owner's behalf |
 | `supabase/migrations/20260803000001_admin_salons_plan_and_geo.sql` | `plan`, `lat`, `lng` on `admin_salons` |
 | `supabase/migrations/20260803000002_admin_update_salon.sql` | `admin_update_salon`; `business_type` on `admin_salon_detail` |
+| `supabase/migrations/20260805000002_app_waitlist.sql` | `app_waitlist`, `waitlist_campaigns`, `waitlist_deliveries`, the public `join_app_waitlist`, and 8 `admin_waitlist*` RPCs |
 | `supabase/tests/admin_test.sql` | pgTAP guard coverage |
 
 > **Keep this in step.** Any migration that changes an `admin_*` signature or a
@@ -49,6 +50,15 @@ All 21 are `SECURITY DEFINER … set search_path = ''` and open with
 | `admin_top_salons` | `(p_metric text default 'turnout', p_limit int default 8)` | `setof` `id, name, city, plan, customers, completed_bookings, revenue` | dashboard chart |
 | `admin_plan_requests` | `()` | `setof` `id, business_id, business_name, city, current_plan, requested_plan, note, requested_by_name, created_at` | approvals detail |
 | `admin_users` | `()` | `setof` `id, full_name, phone, email, avatar_url, role, suspended_at, created_at, salon_count, booking_count, is_self` | the owner picker on `/salons/new` |
+| `admin_waitlist_stats` | `()` | `jsonb` — see below | `/waitlist` stat cards |
+| `admin_waitlist` | `(p_sort text default 'newest')` | `setof` `id, email, source, created_at, notified_at` | `/waitlist` table |
+| `admin_waitlist_campaigns` | `()` | `setof` `id, subject, message, ios_url, android_url, created_at, created_by_name, total, queued, sent, failed` | `/waitlist` campaign history |
+
+`admin_waitlist_stats()` keys: `total`, `last_7_days`, `last_30_days`,
+`notified`, `not_notified`, `latest_signup_at`, `campaigns`,
+`pending_deliveries`, `failed_deliveries`.
+
+`p_sort` ∈ `newest | oldest`; anything else raises `22023`.
 
 `admin_dashboard()` keys: `total_users`, `total_salons`, `pending_approvals`,
 `total_bookings`, `salons_by_status[]`, `users_by_role[]`, `bookings_by_day[]`
@@ -82,6 +92,34 @@ status.
 | `admin_set_user_role` | `(p_user uuid, p_role text)` — `customer \| owner` only | **no UI** — action exists |
 | `admin_delete_user` | `(p_user uuid)` — soft delete + PII scrub | **no UI** — action exists |
 | `admin_set_user_suspended` | `(p_user uuid, p_suspended boolean)` | **not wired** — prefer the block/unblock pair |
+| `admin_send_waitlist_launch` | `(p_subject text, p_message text, p_ios_url text default null, p_android_url text default null, p_include_notified boolean default false)` → `jsonb {campaign_id, queued}` | `waitlist-send.tsx` |
+| `admin_claim_waitlist_deliveries` | `(p_campaign uuid, p_limit int default 25)` → `setof` `id, email, subject, message, ios_url, android_url` | `drainWaitlistCampaign` |
+| `admin_mark_waitlist_delivery_sent` | `(p_id uuid)` — also stamps `app_waitlist.notified_at` | `drainWaitlistCampaign` |
+| `admin_mark_waitlist_delivery_failed` | `(p_id uuid, p_error text)` — error truncated to 500 chars | `drainWaitlistCampaign` |
+| `admin_retry_waitlist_failures` | `(p_campaign uuid)` → `jsonb {requeued}` | `waitlist-send.tsx` |
+| `admin_release_stuck_waitlist_deliveries` | `(p_campaign uuid)` → `jsonb {released}` — `sending` older than 15 min back to `queued` | `drainWaitlistCampaign`, on every pass |
+
+### The waitlist send is an outbox, not a loop
+
+`admin_send_waitlist_launch` **sends nothing.** It creates the campaign and
+inserts one `waitlist_deliveries` row per recipient, in one transaction; the
+console then claims batches of 25 and does the HTTP itself. Three consequences
+worth knowing before changing any of it:
+
+- **A double press cannot double-send.** `unique (campaign_id, waitlist_id)` is
+  the guarantee, not the button's disabled state.
+- **`p_include_notified` defaults to false**, so a second campaign reaches only
+  people who joined since the first. `notified_at` is what makes that work, and
+  it is stamped by `admin_mark_waitlist_delivery_sent` — not at queue time, so
+  an address that never actually received one is not skipped next time.
+- **It raises rather than returning zero** when nobody is eligible, which rolls
+  the empty campaign back instead of leaving it in the history.
+
+There is deliberately **no service_role queue API** here, unlike
+`claim_due_notifications`. An operator is present for every send, so the claim
+and mark functions carry `private.require_admin()` and the console uses its
+ordinary cookie-bound client. Add a service_role pair only if this ever moves
+to cron.
 
 `admin_review_salon` state machine: sets `status`, `is_active`, clears
 `suspended_at`, writes `rejection_reason`, stamps `reviewed_at`/`reviewed_by`,
@@ -212,6 +250,12 @@ Three tables have no admin SELECT policy. Direct reads don't error — they
 
 Tables that *do* have an admin SELECT policy (`…0004`): `bookings`,
 `business_hours`, `reviews`, `services`, `staff_members`, `business_documents`.
+
+The three waitlist tables are a fourth case and the strictest one: RLS is on
+with **no policies at all** and the table grants are revoked from `anon` and
+`authenticated`, so a direct `.from("app_waitlist")` returns `42501` rather
+than under-returning. Everything goes through the definer RPCs — including the
+marketing site, which can reach exactly one function and read nothing.
 
 ---
 

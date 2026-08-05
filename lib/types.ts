@@ -303,6 +303,84 @@ export type NewOwner = {
   avatar_url?: string;
 };
 
+/* -------------------------------------------------------------------------
+   The app waitlist
+   ------------------------------------------------------------------------- */
+
+/** `admin_waitlist_stats()` — every figure on the waitlist page, in one call. */
+export type WaitlistStats = {
+  total: number;
+  last_7_days: number;
+  last_30_days: number;
+  /** People a launch email has actually reached. */
+  notified: number;
+  not_notified: number;
+  latest_signup_at: string | null;
+  campaigns: number;
+  /** Deliveries queued or mid-flight — what "Send remaining" would pick up. */
+  pending_deliveries: number;
+  failed_deliveries: number;
+};
+
+/** One row of `admin_waitlist(p_sort)`. */
+export type WaitlistRow = {
+  id: string;
+  email: string;
+  /** Which call to action produced the signup: `qr`, `header`, … Nullable. */
+  source: string | null;
+  created_at: string;
+  notified_at: string | null;
+};
+
+/** Sort values `admin_waitlist` accepts. Anything else raises 22023. */
+export type WaitlistSort = "newest" | "oldest";
+
+/** One row of `admin_waitlist_campaigns()` — a send, with its delivery tally. */
+export type WaitlistCampaign = {
+  id: string;
+  subject: string;
+  message: string;
+  ios_url: string | null;
+  android_url: string | null;
+  created_at: string;
+  created_by_name: string | null;
+  total: number;
+  /** Still to go out. Non-zero means the send was interrupted or is partial. */
+  queued: number;
+  sent: number;
+  failed: number;
+};
+
+/** What the operator types into the send dialog. */
+export type LaunchAnnouncement = {
+  subject: string;
+  message: string;
+  ios_url: string;
+  android_url: string;
+  /** Re-mail people a previous campaign already reached. Off by default. */
+  include_notified: boolean;
+};
+
+/** One claimed delivery, as `admin_claim_waitlist_deliveries` returns it. */
+export type WaitlistDelivery = {
+  id: string;
+  email: string;
+  subject: string;
+  message: string;
+  ios_url: string | null;
+  android_url: string | null;
+};
+
+/** What a drain pass did, reported back to the page. */
+export type SendResult = {
+  campaignId: string;
+  /** Accepted by the provider. */
+  sent: number;
+  failed: number;
+  /** Left in the queue because the batch cap was hit — press again. */
+  remaining: number;
+};
+
 export const DAY_NAMES = [
   "Sunday",
   "Monday",

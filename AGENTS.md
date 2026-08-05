@@ -8,8 +8,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 Internal operator console for the `bsalons` Supabase project: approve salon
 applications, manage owners and customers, set membership plans, watch platform
-activity. Next.js 16 (App Router, Proxy — not Middleware), React 19, Tailwind 4,
-shadcn/ui.
+activity, and run the pre-launch app waitlist. Next.js 16 (App Router, Proxy —
+not Middleware), React 19, Tailwind 4, shadcn/ui.
 
 ## The backend is not in this repo
 
@@ -48,10 +48,30 @@ and update the doc when it turns out to be stale.
   `lib/format.ts` already has Ngultrum, dates, relative days, initials and the
   Postgres-error mapper.
 
+## Sending email
+
+`lib/email.ts` is the only place this console sends mail from, and it is a
+**seam that simulates when unconfigured** — the same shape as `sendSms()` in
+tho's `process-notifications` worker. With `EMAIL_API_KEY` / `EMAIL_FROM` unset
+the whole path still runs and records, but nothing leaves the server, and the
+send dialog says so on screen rather than quietly pretending.
+
+The waitlist send is an **outbox drain, not a loop**: the RPC queues one row per
+recipient, the action claims 25 at a time and marks each outcome before
+attempting the next. So a provider failure is one `failed` row with the
+provider's own error text, not an exception that loses the twenty already sent —
+and "Retry failed" moves only those rows. Two things this bought that are easy
+to lose in a rewrite: pressing Send twice cannot email anyone twice, and closing
+the tab mid-send strands nothing.
+
+Note it does **not** use the service role. Draining a queue is the shape of work
+that reaches for it and does not need it here — the claim/mark functions are
+`admin_*` RPCs with `private.require_admin()` inside them.
+
 ## Layout
 
 - `app/(console)/` — the console routes (dashboard, `approvals`, `salons`,
-  `users`) behind the role gate in `layout.tsx`.
+  `users`, `waitlist`) behind the role gate in `layout.tsx`.
 - `app/actions.ts` — every server action. `app/login/` — the only public route.
 - `lib/types.ts` — TypeScript shapes mirroring the `admin_*` return values.
   Change a migration, change this file, change `docs/BACKEND.md`.

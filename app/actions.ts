@@ -3,18 +3,23 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendEmail } from "@/lib/email";
 import { rpcErrorMessage } from "@/lib/format";
 import type {
   CreateSalonInfo,
+  LaunchAnnouncement,
   NewOwner,
   PlanName,
   ReviewHours,
   ReviewInfo,
+  SendResult,
   TopSalonRow,
   TrendPoint,
   TrendRange,
   UpdateSalonInfo,
   UserRow,
+  WaitlistCampaign,
+  WaitlistDelivery,
 } from "@/lib/types";
 
 /**
@@ -172,6 +177,128 @@ export async function setSalonPlan(
   revalidatePath("/salons");
   revalidatePath("/");
   return result;
+}
+
+/* ---------------------------------------------------------------------------
+   The app waitlist, and the launch announcement.
+
+   Note what these do NOT use: the service role. Draining an outbox is exactly
+   the shape of work that reaches for it, and it does not need to — the claim
+   and mark functions are `admin_*` RPCs with `private.require_admin()` inside
+   them, so the ordinary cookie-bound client is both sufficient and safer. See
+   the migration's header for why that choice was made there rather than here.
+   --------------------------------------------------------------------------- */
+
+/**
+ * How many emails one press sends.
+ *
+ * A server action has a wall-clock budget, and a send is one HTTP round trip
+ * per recipient. 25 is comfortably inside it while still being a real dent in
+ * a list; whatever is left stays `queued` and the page offers "Send remaining".
+ * The outbox is what makes that safe — no recipient can be sent twice, and
+ * nothing is lost if the page is closed mid-send.
+ */
+const SEND_BATCH = 25;
+
+/**
+ * Create the campaign and send the first batch.
+ *
+ * Two steps, deliberately separate: `admin_send_waitlist_launch` only fills
+ * the outbox, and `drainWaitlistCampaign` does the I/O. If the send half fails
+ * completely the campaign still exists with every recipient queued, which is
+ * recoverable. The reverse — sending first and recording after — is not.
+ */
+export async function sendWaitlistLaunch(
+  announcement: LaunchAnnouncement,
+): Promise<{ ok: true; result: SendResult } | { ok: false; error: string }> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.rpc("admin_send_waitlist_launch", {
+    p_subject: announcement.subject,
+    p_message: announcement.message,
+    p_ios_url: announcement.ios_url.trim() || null,
+    p_android_url: announcement.android_url.trim() || null,
+    p_include_notified: announcement.include_notified,
+  });
+
+  if (error) return { ok: false, error: rpcErrorMessage(error) };
+
+  const campaignId = (data as { campaign_id: string }).campaign_id;
+  return drainWaitlistCampaign(campaignId);
+}
+
+/**
+ * Send one batch of a campaign's queued deliveries.
+ *
+ * Every outcome is recorded per recipient before the next is attempted, so a
+ * crash halfway through leaves a truthful ledger rather than an unknown one.
+ * A provider failure is a `failed` row with the provider's own error text, not
+ * an exception — one bad address must not stop the other twenty-four.
+ */
+export async function drainWaitlistCampaign(
+  campaignId: string,
+): Promise<{ ok: true; result: SendResult } | { ok: false; error: string }> {
+  const supabase = await createClient();
+
+  // Anything a previous, interrupted pass left mid-flight goes back in the
+  // queue first — otherwise those rows are unreachable: not queued, so never
+  // claimed; not failed, so never retried.
+  await supabase.rpc("admin_release_stuck_waitlist_deliveries", {
+    p_campaign: campaignId,
+  });
+
+  const { data, error } = await supabase.rpc("admin_claim_waitlist_deliveries", {
+    p_campaign: campaignId,
+    p_limit: SEND_BATCH,
+  });
+
+  if (error) return { ok: false, error: rpcErrorMessage(error) };
+
+  const claimed = (data ?? []) as WaitlistDelivery[];
+  let sent = 0;
+  let failed = 0;
+
+  for (const delivery of claimed) {
+    const result = await sendEmail(delivery);
+    if (result.ok) {
+      await supabase.rpc("admin_mark_waitlist_delivery_sent", { p_id: delivery.id });
+      sent++;
+    } else {
+      await supabase.rpc("admin_mark_waitlist_delivery_failed", {
+        p_id: delivery.id,
+        p_error: result.error,
+      });
+      // Logged as well as stored: the row is what an operator reads, the log is
+      // what someone reads when the whole batch fails for one reason.
+      console.error(`[waitlist] ${delivery.email} failed: ${result.error}`);
+      failed++;
+    }
+  }
+
+  // Re-read rather than infer. A second operator draining the same campaign
+  // would make any arithmetic here wrong.
+  const { data: campaigns } = await supabase.rpc("admin_waitlist_campaigns");
+  const campaign = ((campaigns ?? []) as WaitlistCampaign[]).find(
+    (row) => row.id === campaignId,
+  );
+
+  revalidatePath("/waitlist");
+  return {
+    ok: true,
+    result: { campaignId, sent, failed, remaining: campaign?.queued ?? 0 },
+  };
+}
+
+/** Put a campaign's failures back in the queue, then send them. */
+export async function retryWaitlistFailures(
+  campaignId: string,
+): Promise<{ ok: true; result: SendResult } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("admin_retry_waitlist_failures", {
+    p_campaign: campaignId,
+  });
+  if (error) return { ok: false, error: rpcErrorMessage(error) };
+  return drainWaitlistCampaign(campaignId);
 }
 
 /* ---------------------------------------------------------------------------
