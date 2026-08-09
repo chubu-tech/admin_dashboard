@@ -1,4 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
+import { supabaseAnonKey, supabaseUrl } from "./env";
 
 /**
  * Browser client. Uses the publishable (anon) key — safe to ship, because
@@ -6,8 +7,8 @@ import { createBrowserClient } from "@supabase/ssr";
  * every table. The key grants nothing on its own.
  */
 export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
+  // Named errors rather than `!` — see `env.ts`. In a browser these read the values
+  // Next inlined at build time, so an unset variable surfaces here as a sentence
+  // instead of as "Invalid URL" from inside the SDK.
+  return createBrowserClient(supabaseUrl(), supabaseAnonKey());
 }

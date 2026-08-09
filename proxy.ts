@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase/env";
 
 /**
  * Session refresh + an optimistic auth redirect.
@@ -13,8 +14,13 @@ export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    // The **first** place a request touches, so it is the one that has to name a
+    // missing variable. With `!` here an unconfigured deploy built a client against
+    // `undefined`, `getUser()` came back empty, and every request was redirected to
+    // `/login` — a misconfiguration wearing the costume of "you are signed out".
+    // Measured: blanking the URL produced a 307 to `/login` and no error anywhere.
+    supabaseUrl(),
+    supabaseAnonKey(),
     {
       cookies: {
         getAll() {
